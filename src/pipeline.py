@@ -1,45 +1,58 @@
 import numpy as np
-from .segmenter import YOLOSegmenter
+import cv2
+from .segmenter import SAM2Segmenter
 from .matcher import CLIPMatcher
-from .painter import SDInpainter
-from .utils import resize_image
+from .painter import SDXLInpainter
+from .utils import visualize_mask
 
 class ObjectRemovalPipeline:
     def __init__(self):
         print("Initializing models...")
-        self.segmenter = YOLOSegmenter()
+        self.segmenter = SAM2Segmenter()
         self.matcher = CLIPMatcher()
-        self.inpainter = SDInpainter()
-        print("Models loaded successfully!")
+        self.inpainter = SDXLInpainter()
+        print("Pipeline ready.")
     
-    def process(self, image, text_query, inpaint_prompt="background"):
+    def process(self, image, text_query, inpaint_prompt=""):
         """
-        Main pipeline for object removal
-        Args:
-            image: numpy array (H, W, 3)
-            text_query: str, e.g., "remove the bottle"
-            inpaint_prompt: str, prompt for inpainting
+        Main processing function for object removal.
         """
-        # Resize for processing
-        original_shape = image.shape[:2]
-        image = resize_image(image, max_size=1024)
-        
-        # Step 1: Segment objects
+        # 1. Segment
         segments = self.segmenter.segment(image)
         if not segments:
-            return image, None, "No objects detected"
+            return image, None, "No segments found"
         
-        # Step 2: Match text query to segment
-        matched_segment = self.matcher.match_segments(image, segments, text_query)
-        if matched_segment is None:
-            return image, None, "No matching object found"
+        # 2. Match with Top-K Strategy
+        # We get top 5 candidates to handle "Part-Whole" ambiguity (e.g. tire vs car)
+        candidates = self.matcher.get_top_k_segments(image, segments, text_query, k=5)
+        if not candidates:
+            return image, None, "No match found"
+            
+        # 3. Merge Masks (The "Cat Tail" Fix)
+        best_candidate = candidates[0]
+        final_mask = best_candidate['mask'].copy()
         
-        # Step 3: Inpaint to remove object
-        result = self.inpainter.inpaint(image, matched_segment['mask'], inpaint_prompt)
+        print(f"Top Match Score: {best_candidate['weighted_score']:.3f}")
+
+        # Merge other candidates if they are close in score or physically overlap
+        for i in range(1, len(candidates)):
+            cand = candidates[i]
+            score_ratio = cand['weighted_score'] / best_candidate['weighted_score']
+            
+            # Check intersection
+            intersection = np.logical_and(final_mask, cand['mask']).sum()
+            
+            # Rule: Merge if score is similar (>85%) OR if they overlap pixels
+            if score_ratio > 0.85 or intersection > 0:
+                print(f"Merging Rank {i+1} (Score ratio: {score_ratio:.2f}, Overlap: {intersection > 0})")
+                final_mask = np.logical_or(final_mask, cand['mask'])
+
+        # 4. Dilate Final Mask
+        # Expands mask slightly to cover edges/seams
+        kernel = np.ones((15, 15), np.uint8)
+        final_mask = cv2.dilate(final_mask.astype(np.uint8), kernel, iterations=1)
+
+        # 5. Inpaint
+        result = self.inpainter.inpaint(image, final_mask, prompt=inpaint_prompt)
         
-        # Resize back if needed
-        if result.shape[:2] != original_shape:
-            import cv2
-            result = cv2.resize(result, (original_shape[1], original_shape[0]))
-        
-        return result, matched_segment['mask'], f"Removed: {matched_segment['class_name']}"
+        return result, final_mask, "Success"
