@@ -6,86 +6,55 @@ Final Project for COMPSCI372: Intro to Applied Machine Learning @ Duke Universit
 
 ---
 
-## Overview
-
-TextEraser intelligently removes objects from images using natural language descriptions. Simply type what you want to remove (e.g., "bottle", "person", "car"), and the AI pipeline handles the rest.
-
-### Key Features
-
-- **Natural language control** - Remove objects by describing them in plain text
-- **Smart segmentation** - Uses SAM2 to find all objects in the image
-- **Intelligent matching** - CLIP identifies which segments match your description
-- **Seamless inpainting** - Stable Diffusion XL fills in the removed area naturally
-- **Multi-part object handling** - Automatically merges related segments (e.g., cat + tail)
-- **Interactive web interface** - Real-time Gradio UI with debug visualization
+## What It Does
+TextEraser is a multimodal AI pipeline that allows users to surgically remove objects from images using natural language (e.g., "remove the bottle"). It integrates **YOLO-World** for open-vocabulary detection, **SAM 2** for precise segmentation, **CLIP** for semantic verification, and **SDXL Inpainting** for background synthesis, effectively automating the "detect-mask-inpaint" workflow without manual intervention.
 
 ---
 
-## How It Works
+## Motivation: Why This Matters
+**The Problem: Destructive Regeneration**
+Current generative models (like DALL-E or built-in editors in ChatGPT) often suffer from "destructive regeneration." When asked to modify a small part of an image, they typically regenerate the entire scene from scratch, altering the lighting, composition, and details of the original photo.
 
-The pipeline has three stages:
-
-1. **Segmentation (SAM2)** - Generates candidate object masks across the image
-2. **Matching (CLIP)** - Scores each segment against your text query
-3. **Inpainting (SDXL)** - Fills the masked region with contextually appropriate content
-
----
-
-## Installation
-
-### Requirements
-
-- Python 3.8+
-- CUDA GPU with 12GB+ VRAM (recommended)
-- ~10GB disk space for models
-
-### Setup
-
-```bash
-# Clone repository
-git clone https://github.com/lxzcpro/TextEraser.git
-cd TextEraser
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run the app
-python app.py
-```
-
-On first run, models will auto-download from HuggingFace (~10GB total).
+**Our Solution: Non-Destructive Editing**
+TextEraser addresses this by strictly isolating the edit. Unlike standard generation:
+1.  **Precision**: It uses segmentation (SAM 2) to cut the exact edge of the object, not just a bounding box.
+2.  **Preservation**: It freezes the rest of the image, ensuring 100% of the non-target pixels remain identical to the original.
+3.  **Context**: It uses inpainting to fill *only* the void with background texture that mathematically matches the scene.
 
 ---
 
-## Usage
+## Video Links
+* **Demo Video**: [INSERT LINK TO DEMO VIDEO HERE]
+* **Technical Walkthrough**: [INSERT LINK TO TECHNICAL VIDEO HERE]
 
-### Web Interface
+---
 
-1. Launch the app: `python app.py`
-2. Upload an image
-3. Enter what to remove (e.g., "bottle", "car", "person")
-4. Optionally specify background fill (default: "background")
-5. Click "Run Pipeline"
-6. Check the debug tab to see what was detected
+## Quick Start
+Please refer to [SETUP.md](SETUP.md) for detailed installation instructions.
 
-### Python API
+---
 
-```python
-from src.pipeline import ObjectRemovalPipeline
-from PIL import Image
-import numpy as np
+## Evaluation & Results
 
-# Initialize pipeline
-pipeline = ObjectRemovalPipeline()
+### Qualitative Comparison
+We evaluated the pipeline by comparing it against standard image-guided generation methods.
 
-# Load and process image
-image = np.array(Image.open("photo.jpg"))
-result, mask, message = pipeline.process(
-    image=image,
-    text_query="bottle",
-    inpaint_prompt="table surface"
-)
+#### Case 1: Complex Object Removal
+**Observation**: TextEraser (SAM2 + SDXL) successfully generates plausible background textures where traditional methods leave blur artifacts.
 
-# Save result
-Image.fromarray(result).save("result.jpg")
-```
+| Input Image                          | Instruct-Pix2Pix                             | CosXL                                        | **TextEraser (Ours)**                        |
+| :----------------------------------: | :------------------------------------------: | :------------------------------------------: | :------------------------------------------: |
+| <img src="examples/phone.png" width="420"/> | <img src="examples/phone-Pix2Pix.png" width="420"/> | <img src="examples/phone-CosXL.png" width="420"/> | <img src="examples/phone-us.png" width="420"/> |
+| <img src="examples/backpack.png" width="420"/> | <img src="examples/backpack-Pix2Pix.png" width="420"/> | <img src="examples/backpack-CosXL.png" width="420"/> | <img src="examples/backpack-us.png" width="420"/> |
+
+*(Note: See the `examples/` folder for full resolution images)*
+
+### Model Design Choices (Justification)
+* **SAM 2 vs. YOLO (Segmentation)**: While standard YOLO segmentation models are efficient, they are typically limited to a fixed set of **80 classes** (COCO dataset). We selected **SAM 2** because it is class-agnostic; it can generate precise masks for *any* object detected by our open-vocabulary pipeline, enabling true "zero-shot" removal of unlimited object types.
+* **SDXL vs. Other Generative Models**: We prioritized **Stable Diffusion XL (SDXL)** over older diffusion models (like SD 1.5) or GAN-based inpainters (like LaMa). SDXL natively supports higher resolutions (1024x1024) and demonstrates superior semantic understanding, allowing it to hallucinate realistic textures (e.g., brick patterns, foliage) where other models often produce blurry or repetitive artifacts.
+
+---
+
+## Individual Contributions
+**Solo Project**
+This project was designed, implemented, and documented entirely by **Xuting Zhang**. All code, including the integration of the detection-segmentation-inpainting pipeline, is original work.
