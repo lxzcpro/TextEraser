@@ -1,58 +1,107 @@
 import numpy as np
 import cv2
-from .segmenter import SAM2Segmenter
+import torch
+import gc
+# Note: We import classes but DO NOT instantiate them globally
+from .segmenter import YOLOWorldDetector, SAM2Predictor
 from .matcher import CLIPMatcher
 from .painter import SDXLInpainter
-from .utils import visualize_mask
 
 class ObjectRemovalPipeline:
     def __init__(self):
-        print("Initializing models...")
-        self.segmenter = SAM2Segmenter()
-        self.matcher = CLIPMatcher()
-        self.inpainter = SDXLInpainter()
-        print("Pipeline ready.")
+        print("Initializing Pipeline in LOW MEMORY mode...")
+        # No models loaded at startup!
+        pass
     
-    def process(self, image, text_query, inpaint_prompt=""):
+    def _clear_ram(self):
+        """Helper to force clear RAM & VRAM"""
+        gc.collect()
+        torch.cuda.empty_cache()
+
+    def get_candidates(self, image, text_query):
         """
-        Main processing function for object removal.
+        Step 1: Detect & Segment & Rank
+        Strategy: Load one model at a time, use it, then delete it.
         """
-        # 1. Segment
-        segments = self.segmenter.segment(image)
-        if not segments:
-            return image, None, "No segments found"
+        candidates = []
+        box_candidates = []
         
-        # 2. Match with Top-K Strategy
-        # We get top 5 candidates to handle "Part-Whole" ambiguity (e.g. tire vs car)
-        candidates = self.matcher.get_top_k_segments(image, segments, text_query, k=5)
-        if not candidates:
-            return image, None, "No match found"
+        # --- PHASE 1: YOLO (Detect) ---
+        print("Loading YOLO...")
+        detector = YOLOWorldDetector()
+        try:
+            box_candidates = detector.detect(image, text_query)
+        finally:
+            del detector # Delete model immediately
+            self._clear_ram()
             
-        # 3. Merge Masks (The "Cat Tail" Fix)
-        best_candidate = candidates[0]
-        final_mask = best_candidate['mask'].copy()
+        if not box_candidates:
+            return [], "No objects detected."
+
+        # --- PHASE 2: SAM2 (Segment) ---
+        print("Loading SAM2...")
+        segmenter = SAM2Predictor()
+        segments_to_score = []
+        try:
+            segmenter.set_image(image)
+            # Process top 3 boxes -> up to 9 masks
+            for cand in box_candidates[:3]: 
+                bbox = cand['bbox']
+                mask_variations = segmenter.predict_from_box(bbox)
+                for i, (mask, sam_score) in enumerate(mask_variations):
+                    segments_to_score.append({
+                        'mask': mask,
+                        'bbox': bbox,
+                        'area': mask.sum(),
+                        'label': f"{cand['label']} (Var {i+1})"
+                    })
+        finally:
+            # Critical cleanup for SAM2
+            if hasattr(segmenter, 'clear_memory'):
+                segmenter.clear_memory()
+            del segmenter
+            self._clear_ram()
+
+        # --- PHASE 3: CLIP (Rank) ---
+        print("Loading CLIP...")
+        matcher = CLIPMatcher()
+        ranked_candidates = []
+        try:
+            ranked_candidates = matcher.get_top_k_segments(
+                image, 
+                segments_to_score, 
+                text_query, 
+                k=len(segments_to_score)
+            )
+        finally:
+            del matcher
+            self._clear_ram()
+            
+        return ranked_candidates, f"Found {len(ranked_candidates)} options."
+
+    def inpaint_selected(self, image, selected_mask, inpaint_prompt="", shadow_expansion=0):
+        """
+        Step 2: Inpaint
+        """
+        # Shadow / Edge Logic (CPU ops)
+        if shadow_expansion > 0:
+            kernel_h = int(shadow_expansion * 1.5)
+            kernel_w = int(shadow_expansion * 0.5)
+            kernel = np.ones((kernel_h, kernel_w), np.uint8)
+            selected_mask = cv2.dilate(selected_mask.astype(np.uint8), kernel, iterations=1)
+
+        kernel = np.ones((10, 10), np.uint8)
+        final_mask = cv2.dilate(selected_mask.astype(np.uint8), kernel, iterations=1)
         
-        print(f"Top Match Score: {best_candidate['weighted_score']:.3f}")
-
-        # Merge other candidates if they are close in score or physically overlap
-        for i in range(1, len(candidates)):
-            cand = candidates[i]
-            score_ratio = cand['weighted_score'] / best_candidate['weighted_score']
-            
-            # Check intersection
-            intersection = np.logical_and(final_mask, cand['mask']).sum()
-            
-            # Rule: Merge if score is similar (>85%) OR if they overlap pixels
-            if score_ratio > 0.85 or intersection > 0:
-                print(f"Merging Rank {i+1} (Score ratio: {score_ratio:.2f}, Overlap: {intersection > 0})")
-                final_mask = np.logical_or(final_mask, cand['mask'])
-
-        # 4. Dilate Final Mask
-        # Expands mask slightly to cover edges/seams
-        kernel = np.ones((15, 15), np.uint8)
-        final_mask = cv2.dilate(final_mask.astype(np.uint8), kernel, iterations=1)
-
-        # 5. Inpaint
-        result = self.inpainter.inpaint(image, final_mask, prompt=inpaint_prompt)
+        result = None
         
-        return result, final_mask, "Success"
+        # --- PHASE 4: SDXL (Inpaint) ---
+        print("Loading SDXL...")
+        inpainter = SDXLInpainter()
+        try:
+            result = inpainter.inpaint(image, final_mask, prompt=inpaint_prompt)
+        finally:
+            del inpainter
+            self._clear_ram()
+            
+        return result

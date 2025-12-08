@@ -1,129 +1,109 @@
 import gradio as gr
 import numpy as np
-import torch
 from src.pipeline import ObjectRemovalPipeline
 from src.utils import visualize_mask
 
-# Initialize pipeline globally to load models only once
-print("Loading pipeline...")
+# Initialize pipeline once
 pipeline = ObjectRemovalPipeline()
 
 def ensure_uint8(image):
-    """
-    Ensures the image is in valid uint8 format (0-255) for Gradio display.
-    """
-    if image is None:
-        return None
-        
+    if image is None: return None
     image = np.array(image)
-    
-    # 1. Handle NaN/Inf (Exploding gradients often cause this)
-    if not np.isfinite(image).all():
-        print("Warning: Image contains NaN or Inf. Replacing with black.")
-        image = np.nan_to_num(image, nan=0.0, posinf=255.0, neginf=0.0)
-
-    # 2. Normalize Float (0.0-1.0) to Int (0-255)
     if image.dtype != np.uint8:
-        # If image is in 0-1 range (common in torch/diffusers)
-        if image.max() <= 1.0:
-            image = (image * 255.0)
-        
-        # Clip to safe range and cast
+        if image.max() <= 1.0: image = image * 255.0
         image = np.clip(image, 0, 255).astype(np.uint8)
-        
     return image
 
-def remove_object(image, text_query, inpaint_prompt, progress=gr.Progress()):
-    """
-    Gradio wrapper with progress tracking and error handling.
-    """
-    if image is None:
-        return None, None, "Error: Please upload an image first."
+def step1_detect(image, text_query):
+    if image is None or not text_query:
+        return [], [], "Please upload image and enter text."
     
-    if not text_query:
-        return image, None, "Error: Please specify what to remove."
-
-    try:
-        # 1. Segmentation Phase
-        progress(0.2, desc="Segmenting & Matching Object...")
+    # Calls the new method in pipeline.py
+    candidates, msg = pipeline.get_candidates(image, text_query)
+    
+    if not candidates:
+        return [], [], f"Error: {msg}"
+    
+    masks = [c['mask'] for c in candidates]
+    
+    # Generate visualization for gallery
+    gallery_imgs = []
+    for i, mask in enumerate(masks):
+        viz = visualize_mask(image, mask)
+        # Label with rank and score if available
+        label = f"Option {i+1} (Score: {candidates[i].get('weighted_score', 0):.2f})"
+        gallery_imgs.append((ensure_uint8(viz), label))
         
-        # Note: We call the pipeline. 
-        # Ideally, you would break the pipeline.process method apart to update progress 
-        # between segmentation and inpainting, but this works for now.
-        result, mask, message = pipeline.process(
-            image, 
-            text_query, 
-            inpaint_prompt if inpaint_prompt else "background"
-        )
-        
-        # 2. Visualization Phase
-        progress(0.9, desc="Post-processing...")
-        mask_viz = None
-        if mask is not None:
-            mask_viz = visualize_mask(image, mask)
-        else:
-            # If no mask found, return original image as preview
-            mask_viz = image 
+    return masks, gallery_imgs, "Select the best match below."
 
-        mask_viz = ensure_uint8(mask_viz)
-        result = ensure_uint8(result)
+def on_select(evt: gr.SelectData):
+    return evt.index
 
-        return result, mask_viz, message
+def step2_remove(image, masks, selected_idx, prompt, shadow_exp):
+    if not masks or selected_idx is None:
+        return None, "Please select an object first."
+    
+    target_mask = masks[selected_idx]
+    
+    # Calls the pipeline method
+    result = pipeline.inpaint_selected(image, target_mask, prompt, shadow_expansion=shadow_exp)
+    
+    return ensure_uint8(result), "Success!"
 
-    except torch.cuda.OutOfMemoryError:
-        return None, None, "Error: GPU Out of Memory. Try a smaller image."
-    except Exception as e:
-        return None, None, f"Error: {str(e)}"
-
-# Define Custom CSS for a cleaner look (Optional)
+# CSS for cleaner UI
 css = """
-footer {visibility: hidden}
 .gradio-container {min-height: 0px !important}
+/* Ensure images in gallery don't get cropped strictly */
+button.gallery-item {object-fit: contain !important} 
 """
 
-with gr.Blocks(title="Object Removal", css=css, theme=gr.themes.Soft()) as demo:
-    gr.Markdown("## Text-Guided Object Removal Pipeline")
-    gr.Markdown("Identify objects via CLIP and remove them using Stable Diffusion.")
+with gr.Blocks(title="TextEraser", css=css, theme=gr.themes.Soft()) as demo:
+    mask_state = gr.State([])
+    idx_state = gr.State(0) 
+
+    gr.Markdown("## TextEraser: Interactive Object Removal")
     
     with gr.Row():
         with gr.Column(scale=1):
             input_image = gr.Image(label="Input Image", type="numpy", height=400)
-            text_query = gr.Textbox(
-                label="Target Object", 
-                placeholder="e.g., 'bottle', 'cell', 'petri dish'",
-                info="What should be removed?"
-            )
-            inpaint_prompt = gr.Textbox(
-                label="Inpaint Prompt (Context)", 
-                placeholder="background",
-                value="background",
-                info="What should fill the empty space?"
-            )
-            submit_btn = gr.Button("Run Pipeline", variant="primary")
+            text_query = gr.Textbox(label="What to remove?", placeholder="e.g. 'bottle', 'shadow'")
+            btn_detect = gr.Button("1. Detect Objects", variant="primary")
         
         with gr.Column(scale=1):
-            # Result tabs to switch between final result and debug mask
-            with gr.Tabs():
-                with gr.TabItem("Final Result"):
-                    output_image = gr.Image(label="Inpainted Result", height=400)
-                with gr.TabItem("Segmentation Debug"):
-                    mask_preview = gr.Image(label="Detected Mask Overlay", height=400)
+            # FIXED: object_fit="contain" prevents cropping
+            # allow_preview=True lets you click to zoom
+            gallery = gr.Gallery(
+                label="Candidates (Select One)", 
+                columns=2, 
+                height=400, 
+                allow_preview=True, 
+                object_fit="contain" 
+            )
+            status = gr.Textbox(label="Status", interactive=False)
+
+    with gr.Row():
+        with gr.Column(scale=1):
+            shadow_slider = gr.Slider(0, 40, value=10, label="Shadow Fix (Expand Mask Downwards)")
+            inpaint_prompt = gr.Textbox(label="Background Description", value="background")
+            btn_remove = gr.Button("2. Remove Selected", variant="stop")
             
-            status_text = gr.Textbox(label="Pipeline Logs", interactive=False)
+        with gr.Column(scale=1):
+            output_image = gr.Image(label="Final Result", height=400)
+
+    # Event Wiring
+    btn_detect.click(
+        fn=step1_detect,
+        inputs=[input_image, text_query],
+        outputs=[mask_state, gallery, status]
+    )
     
-    # Examples allow users to test without uploading
-    # Ensure these files actually exist in your folder, or comment this out
-    # gr.Examples(
-    #     examples=[["examples/lab_bench.jpg", "remove the pipette", "table surface"]],
-    #     inputs=[input_image, text_query, inpaint_prompt],
-    # )
+    gallery.select(fn=on_select, inputs=None, outputs=idx_state)
     
-    submit_btn.click(
-        fn=remove_object,
-        inputs=[input_image, text_query, inpaint_prompt],
-        outputs=[output_image, mask_preview, status_text]
+    btn_remove.click(
+        fn=step2_remove,
+        inputs=[input_image, mask_state, idx_state, inpaint_prompt, shadow_slider],
+        outputs=[output_image, status]
     )
 
 if __name__ == "__main__":
-    # queue() is essential for handling GPU workloads and preventing timeouts
     demo.queue().launch(share=True)

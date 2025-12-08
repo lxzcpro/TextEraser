@@ -75,7 +75,7 @@ class SDXLInpainter:
         
         # Blur the mask slightly to make the transition smoother
         import cv2
-        mask = cv2.GaussianBlur(mask, (5, 5), 0) 
+        mask = cv2.GaussianBlur(mask, (21, 21), 0)
         
         pil_mask = Image.fromarray((mask * 255).astype(np.uint8)).convert('L')
         

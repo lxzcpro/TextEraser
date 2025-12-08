@@ -1,6 +1,6 @@
 from .pipeline import ObjectRemovalPipeline
-from .segmenter import YOLOSegmenter
+from .segmenter import SAM2Predictor
 from .matcher import CLIPMatcher
-from .painter import SDInpainter
+from .painter import SDXLInpainter
 
-__all__ = ['ObjectRemovalPipeline', 'YOLOSegmenter', 'CLIPMatcher', 'SDInpainter']
+__all__ = ['ObjectRemovalPipeline', 'CLIPMatcher', 'SDXLInpainter', 'SAM2Predictor']
