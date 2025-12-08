@@ -208,3 +208,7 @@ __marimo__/
 
 models/yolov8
 rubrics.txt
+yolov8s-worldv2.pt
+yolov8x-seg.pt
+.gradio
+notebook

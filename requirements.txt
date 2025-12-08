@@ -17,3 +17,6 @@ PyYAML
 filelock
 Pillow
 sniffio
+spaces
+clip
+git+https://github.com/facebookresearch/sam2.git
