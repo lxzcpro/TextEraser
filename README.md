@@ -4,6 +4,8 @@
 
 Final Project for COMPSCI372: Intro to Applied Machine Learning @ Duke University (Fall 2025)
 
+![Pipeline](examples/pipeline.png)
+
 ---
 
 ## What It Does
