@@ -3,7 +3,7 @@ import numpy as np
 from src.pipeline import ObjectRemovalPipeline
 from src.utils import visualize_mask
 
-# Initialize pipeline once
+
 pipeline = ObjectRemovalPipeline()
 
 def ensure_uint8(image):
@@ -18,7 +18,7 @@ def step1_detect(image, text_query):
     if image is None or not text_query:
         return [], [], "Please upload image and enter text."
     
-    # Calls the new method in pipeline.py
+
     candidates, msg = pipeline.get_candidates(image, text_query)
     
     if not candidates:
@@ -26,11 +26,11 @@ def step1_detect(image, text_query):
     
     masks = [c['mask'] for c in candidates]
     
-    # Generate visualization for gallery
+
     gallery_imgs = []
     for i, mask in enumerate(masks):
         viz = visualize_mask(image, mask)
-        # Label with rank and score if available
+
         label = f"Option {i+1} (Score: {candidates[i].get('weighted_score', 0):.2f})"
         gallery_imgs.append((ensure_uint8(viz), label))
         
@@ -45,15 +45,13 @@ def step2_remove(image, masks, selected_idx, prompt, shadow_exp):
     
     target_mask = masks[selected_idx]
     
-    # Calls the pipeline method
+
     result = pipeline.inpaint_selected(image, target_mask, prompt, shadow_expansion=shadow_exp)
     
     return ensure_uint8(result), "Success!"
 
-# CSS for cleaner UI
 css = """
 .gradio-container {min-height: 0px !important}
-/* Ensure images in gallery don't get cropped strictly */
 button.gallery-item {object-fit: contain !important} 
 """
 
@@ -70,8 +68,7 @@ with gr.Blocks(title="TextEraser", css=css, theme=gr.themes.Soft()) as demo:
             btn_detect = gr.Button("1. Detect Objects", variant="primary")
         
         with gr.Column(scale=1):
-            # FIXED: object_fit="contain" prevents cropping
-            # allow_preview=True lets you click to zoom
+
             gallery = gr.Gallery(
                 label="Candidates (Select One)", 
                 columns=2, 

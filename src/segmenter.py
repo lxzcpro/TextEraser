@@ -6,7 +6,7 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 
 class YOLOWorldDetector:
     def __init__(self, model_name='yolov8s-worldv2.pt'):
-        # Initialize, but manage device carefully
+
         self.model = YOLO(model_name)
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
@@ -16,7 +16,7 @@ class YOLOWorldDetector:
         
         boxes = []
         try:
-            # FIX: Force CPU for text encoding to prevent RuntimeError
+
             self.model.to('cpu')
             self.model.set_classes([clean_text])
             
@@ -37,7 +37,7 @@ class YOLOWorldDetector:
         except Exception as e:
             print(f"YOLO Error: {e}")
         finally:
-            # Always offload after use
+
             self.model.to('cpu')
             
         boxes.sort(key=lambda x: x['score'], reverse=True)
@@ -57,7 +57,7 @@ class SAM2Predictor:
 
     def predict_from_box(self, bbox):
         box_input = np.array(bbox)[None, :]
-        # Multimask = True for variety
+
         masks, scores, logits = self.predictor.predict(
             point_coords=None,
             point_labels=None,
@@ -68,7 +68,7 @@ class SAM2Predictor:
         return [(m.astype(np.uint8), s) for m, s in sorted_results]
         
     def clear_memory(self):
-        # Critical for preventing memory leaks
+
         self.predictor.reset_predictor()
         self.predictor.model.to('cpu')
         del self.predictor
