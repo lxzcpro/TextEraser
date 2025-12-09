@@ -26,8 +26,8 @@ TextEraser addresses this by strictly isolating the edit. Unlike standard genera
 ---
 
 ## Video Links
-* **Demo Video**: [INSERT LINK TO DEMO VIDEO HERE]
-* **Technical Walkthrough**: [INSERT LINK TO TECHNICAL VIDEO HERE]
+* **Demo Video**: [Demo Video](https://drive.google.com/file/d/10FFHgKyqW1cEvVs5a0IqvjE6iufJtGT9/view?usp=sharing)
+* **Technical Walkthrough**: [Technical Walkthrough](https://drive.google.com/file/d/101KiPHRl8esCkN-NPy_-C0JTD3cN6vd7/view?usp=sharing)
 
 ---
 
