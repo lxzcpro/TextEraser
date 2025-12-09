@@ -31,6 +31,13 @@ TextEraser addresses this by strictly isolating the edit. Unlike standard genera
 
 ---
 
+## Live Demo
+* **Hugging Face Space**: [Try TextEraser Online](https://huggingface.co/spaces/lxzcpro/TextEraser)
+
+*Note: Due to hardware limitations on the hosting platform (free tier GPU), the online demo currently supports **Segmentation Only** (Detection + Masking). To experience the full pipeline with SDXL Inpainting, please run the project locally.*
+
+---
+
 ## Quick Start
 Please refer to [SETUP.md](SETUP.md) for detailed installation instructions.
 
